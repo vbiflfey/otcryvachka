@@ -92,44 +92,77 @@ class WatchdogApp:
     def add_app(self):
         dialog = tk.Toplevel(self.root)
         dialog.title("Добавить приложение")
-        dialog.geometry("500x300")
+        dialog.geometry("550x350")
         dialog.configure(bg='#f0f0f0')
         dialog.transient(self.root)
         dialog.grab_set()
         
-        tk.Label(dialog, text="Выберите файл для запуска:", font=("Segoe UI", 10, "bold"), 
+        # 1. Выбор файла для запуска
+        tk.Label(dialog, text="📁 Выберите файл для запуска:", font=("Segoe UI", 10, "bold"), 
                 bg='#f0f0f0').pack(pady=(20,5))
         
         file_frame = tk.Frame(dialog, bg='#f0f0f0')
         file_frame.pack(pady=5)
         
         file_path_var = tk.StringVar()
-        file_entry = tk.Entry(file_frame, textvariable=file_path_var, width=40)
+        file_entry = tk.Entry(file_frame, textvariable=file_path_var, width=45)
         file_entry.pack(side=tk.LEFT, padx=5)
         
         def browse_file():
             path = filedialog.askopenfilename(
-                title="Выберите файл",
+                title="Выберите файл для запуска",
                 filetypes=[("Исполняемые файлы", "*.exe *.bat *.cmd *.ps1"), ("Все файлы", "*.*")]
             )
             if path:
                 file_path_var.set(path)
+                # Автоматически предлагаем имя процесса для отслеживания
+                ext = os.path.splitext(path)[1].lower()
+                if ext == '.exe':
+                    process_var.set(os.path.basename(path))
+                elif ext in ['.bat', '.cmd']:
+                    # Для bat предлагаем выбрать процесс отдельно
+                    process_var.set("")
         
-        tk.Button(file_frame, text="Обзор", command=browse_file, bg='#2196F3', fg='white').pack(side=tk.LEFT)
+        tk.Button(file_frame, text="Обзор", command=browse_file, bg='#2196F3', fg='white', padx=10).pack(side=tk.LEFT)
         
-        tk.Label(dialog, text="Отслеживаемый процесс (для bat/cmd):", font=("Segoe UI", 10, "bold"), 
-                bg='#f0f0f0').pack(pady=(15,5))
-        tk.Label(dialog, text="Если оставить пустым, будет отслеживаться сам файл", 
+        # 2. Отслеживаемый процесс (с обзором)
+        tk.Label(dialog, text="🔍 Отслеживаемый процесс (что проверять на запуск):", 
+                font=("Segoe UI", 10, "bold"), bg='#f0f0f0').pack(pady=(15,5))
+        tk.Label(dialog, text="Укажите имя процесса (например: notepad.exe) или выберите файл", 
                 font=("Segoe UI", 8), bg='#f0f0f0', fg='gray').pack()
         
+        process_frame = tk.Frame(dialog, bg='#f0f0f0')
+        process_frame.pack(pady=5)
+        
         process_var = tk.StringVar()
-        process_entry = tk.Entry(dialog, textvariable=process_var, width=40)
-        process_entry.pack(pady=5)
+        process_entry = tk.Entry(process_frame, textvariable=process_var, width=45)
+        process_entry.pack(side=tk.LEFT, padx=5)
+        
+        def browse_process():
+            # Выбираем exe файл и берем только его имя
+            proc_path = filedialog.askopenfilename(
+                title="Выберите программу для отслеживания (возьмется только имя файла)",
+                filetypes=[("Исполняемые файлы", "*.exe"), ("Все файлы", "*.*")]
+            )
+            if proc_path:
+                # Берем только имя файла (например: myapp.exe)
+                proc_name = os.path.basename(proc_path)
+                process_var.set(proc_name)
+                # Показываем подсказку
+                process_entry.config(fg='green')
+                # Возвращаем цвет через 2 секунды
+                dialog.after(2000, lambda: process_entry.config(fg='black'))
+        
+        tk.Button(process_frame, text="Обзор", command=browse_process, bg='#FF9800', fg='white', padx=10).pack(side=tk.LEFT)
+        
+        # Подсказка
+        tk.Label(dialog, text="💡 Для bat/cmd файлов: укажите процесс, который они запускают (например: chrome.exe)", 
+                font=("Segoe UI", 8), bg='#f0f0f0', fg='#666').pack(pady=(10,0))
         
         def save():
             file_path = file_path_var.get().strip()
             if not file_path or not os.path.exists(file_path):
-                messagebox.showerror("Ошибка", "Выберите существующий файл!")
+                messagebox.showerror("Ошибка", "Выберите существующий файл для запуска!")
                 return
             
             app_name = os.path.splitext(os.path.basename(file_path))[0]
@@ -138,23 +171,42 @@ class WatchdogApp:
             # Если для bat-файла не указан процесс для отслеживания
             ext = os.path.splitext(file_path)[1].lower()
             if ext in ['.bat', '.cmd'] and not track_process:
-                track_process = "cmd.exe"  # Будем отслеживать cmd
-                messagebox.showwarning("Внимание", "Для bat-файлов лучше указать имя процесса, который они запускают!\nПока будет отслеживаться cmd.exe")
+                # Пробуем угадать по имени
+                track_process = f"{app_name}.exe"
+                if not messagebox.askyesno("Вопрос", 
+                    f"Вы не указали процесс для отслеживания.\n\n"
+                    f"Буду отслеживать '{track_process}'.\n"
+                    f"Если это неверно, программа не будет правильно перезапускать приложение.\n\n"
+                    f"Продолжить с этим процессом?"):
+                    return
+            
+            if not track_process:
+                track_process = os.path.basename(file_path)
             
             self.apps.append({
                 "name": app_name,
                 "path": file_path,
-                "track_process": track_process if track_process else os.path.basename(file_path),
+                "track_process": track_process,
                 "last_start": "Никогда"
             })
             
             self.save_config()
             self.update_statuses()
             dialog.destroy()
-            messagebox.showinfo("Успех", f"✅ '{app_name}' добавлен\nОтслеживается процесс: {track_process if track_process else os.path.basename(file_path)}")
+            messagebox.showinfo("Успех", 
+                f"✅ '{app_name}' добавлен!\n\n"
+                f"📂 Запускаемый файл: {os.path.basename(file_path)}\n"
+                f"🔍 Отслеживается процесс: {track_process}")
         
-        tk.Button(dialog, text="Сохранить", command=save, bg='#4CAF50', fg='white', 
-                 font=("Segoe UI", 10, "bold")).pack(pady=20)
+        # Кнопки внизу
+        button_frame_dialog = tk.Frame(dialog, bg='#f0f0f0')
+        button_frame_dialog.pack(pady=20)
+        
+        tk.Button(button_frame_dialog, text="✅ Добавить", command=save, bg='#4CAF50', fg='white', 
+                 font=("Segoe UI", 10, "bold"), padx=20).pack(side=tk.LEFT, padx=10)
+        
+        tk.Button(button_frame_dialog, text="❌ Отмена", command=dialog.destroy, bg='#999', fg='white', 
+                 font=("Segoe UI", 10), padx=20).pack(side=tk.LEFT, padx=10)
     
     def remove_app(self):
         selected = self.tree.selection()
@@ -175,12 +227,21 @@ class WatchdogApp:
             self.update_statuses()
     
     def start_all_apps(self):
+        if not self.apps:
+            messagebox.showinfo("Инфо", "Нет приложений для запуска")
+            return
+        
         for app in self.apps:
             self.start_app(app)
         self.update_statuses()
+        messagebox.showinfo("Выполнено", "✅ Все приложения запущены!")
     
     def start_app(self, app):
         try:
+            if not os.path.exists(app['path']):
+                print(f"Файл не найден: {app['path']}")
+                return False
+            
             ext = os.path.splitext(app['path'])[1].lower()
             
             if ext == '.bat' or ext == '.cmd':
@@ -194,7 +255,7 @@ class WatchdogApp:
             print(f"✅ Запущен: {app['name']}")
             return True
         except Exception as e:
-            print(f"❌ Ошибка запуска: {e}")
+            print(f"❌ Ошибка запуска {app['name']}: {e}")
             return False
     
     def is_process_running(self, app):
@@ -203,14 +264,23 @@ class WatchdogApp:
             import psutil
             track_process = app.get('track_process', os.path.basename(app['path'])).lower()
             
+            # Убираем расширение .exe для более гибкого поиска
+            if track_process.endswith('.exe'):
+                track_process_no_ext = track_process[:-4]
+            else:
+                track_process_no_ext = track_process
+            
             for proc in psutil.process_iter(['pid', 'name']):
                 try:
-                    if proc.info['name'] and proc.info['name'].lower() == track_process:
-                        return True
+                    if proc.info['name']:
+                        proc_name = proc.info['name'].lower()
+                        # Проверяем точное совпадение или совпадение без расширения
+                        if proc_name == track_process or proc_name == track_process_no_ext + '.exe':
+                            return True
                 except:
                     continue
         except Exception as e:
-            print(f"Ошибка проверки: {e}")
+            print(f"Ошибка проверки процесса: {e}")
         
         return False
     
@@ -227,7 +297,7 @@ class WatchdogApp:
                 self.root.after(0, self.update_statuses)
                 time.sleep(5)
             except Exception as e:
-                print(f"Ошибка: {e}")
+                print(f"Ошибка в сторожевом потоке: {e}")
                 time.sleep(5)
     
     def update_statuses(self):
@@ -288,11 +358,9 @@ class WatchdogApp:
                                 0, winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE)
             
             if self.autostart_var.get():
-                # Включаем
                 winreg.SetValueEx(key, "Otkyyvashka", 0, winreg.REG_SZ, app_path)
                 messagebox.showinfo("Автозапуск", "✅ Автозапуск ВКЛЮЧЕН!")
             else:
-                # Выключаем
                 try:
                     winreg.DeleteValue(key, "Otkyyvashka")
                     messagebox.showinfo("Автозапуск", "❌ Автозапуск ОТКЛЮЧЕН!")
@@ -307,6 +375,7 @@ class WatchdogApp:
         try:
             with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
                 json.dump(self.apps, f, ensure_ascii=False, indent=2)
+            print(f"💾 Конфиг сохранен: {len(self.apps)} приложений")
         except Exception as e:
             print(f"Ошибка сохранения: {e}")
     
@@ -315,12 +384,12 @@ class WatchdogApp:
             try:
                 with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
                     self.apps = json.load(f)
-                print(f"Загружено {len(self.apps)} приложений")
+                print(f"📂 Загружено {len(self.apps)} приложений")
             except:
                 self.apps = []
     
     def on_closing(self):
-        print("🛑 Закрытие...")
+        print("🛑 Закрытие программы...")
         self.running = False
         self.root.destroy()
 
@@ -331,5 +400,7 @@ if __name__ == "__main__":
         root.protocol("WM_DELETE_WINDOW", app.on_closing)
         root.mainloop()
     except Exception as e:
-        print(f"Ошибка: {e}")
-        input("Нажмите Enter...")
+        print(f"❌ Критическая ошибка: {e}")
+        import traceback
+        traceback.print_exc()
+        input("Нажмите Enter для выхода...")
